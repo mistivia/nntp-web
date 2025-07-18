@@ -245,7 +245,6 @@ class NNTPRequestHandler(BaseHTTPRequestHandler):
             <div class="article-body">
                 {body_html}
             </div>
-            <a target="_blank" href="https://blog.mistivia.com/posts/2025-06-04-newsgroup/">如何回复</a>
             {attachments_html}
         </body>
         </html>
