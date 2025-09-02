@@ -129,6 +129,7 @@ class NNTPRequestHandler(BaseHTTPRequestHandler):
             subject = overview.get('subject', 'Not Subject')
             subject = decode_email_subject(subject)
             author = overview.get('from', 'Anonymous')
+            author = decode_email_subject(author)
             date = overview.get('date', 'Unknown Date')
             articles_html += f'''
                 <li>
