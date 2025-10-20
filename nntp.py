@@ -1,5 +1,3 @@
-# nntplib in deprecated in Python 3.13
-# Use https://pypi.org/project/standard-nntplib/ instead
 import nntplib
 import email
 from email import policy
@@ -12,12 +10,26 @@ import re
 import urllib.parse
 import sys
 from collections import deque
+from datetime import datetime, timedelta, timezone
 
-NNTP_SERVER = 'nntp.example.org'
+# 配置信息
+NNTP_SERVER = 'raye.mistivia.com'  # 替换为你的NNTP服务器地址
 NNTP_PORT = 119
-GROUP_NAME = 'sharknews'
+GROUP_NAME = 'sharknews'   # 替换为你想阅读的新闻组
 PAGE_SIZE = 25
-LISTEN_PORT = 8000
+
+def dateconvert(utc_time_str):
+    time_format = "%a, %d %b %Y %H:%M:%S %z"
+    try:
+        dt_utc = datetime.strptime(utc_time_str, time_format)
+        cst_offset = timedelta(hours=8)
+        dt_cst_naive = dt_utc + cst_offset
+        tz_cst = timezone(cst_offset)
+        dt_cst_aware = dt_cst_naive.replace(tzinfo=tz_cst)
+        iso_8601_cst = dt_cst_aware.isoformat(timespec='seconds')
+        return iso_8601_cst
+    except ValueError as e:
+        return "未知日期"
 
 class NNTPClient:
     def __init__(self):
@@ -54,18 +66,34 @@ class NNTPClient:
 from email.header import decode_header
 
 def decode_email_subject(subject):
+    """
+    使用 Python 标准库解码邮件主题字符串
+    
+    参数:
+        subject (str): 包含编码部分的邮件主题字符串
+        
+    返回:
+        str: 解码后的完整字符串
+    """
+    # 使用 email 标准库的 decode_header 函数
     decoded_parts = decode_header(subject)
     
+    # 将每个部分解码为字符串
     decoded_strings = []
     for part, encoding in decoded_parts:
         if isinstance(part, bytes):
             try:
+                # 使用指定的编码解码，如果编码为 None 则尝试 utf-8
                 charset = encoding or 'utf-8'
                 decoded_strings.append(part.decode(charset, errors='replace'))
             except (LookupError, UnicodeDecodeError):
+                # 如果编码无效或解码失败，使用回退方案
                 decoded_strings.append(part.decode('latin-1', errors='replace'))
         else:
+            # 如果已经是字符串，直接添加
             decoded_strings.append(part)
+    
+    # 拼接所有解码后的部分
     return ''.join(decoded_strings)
 
 
@@ -116,35 +144,40 @@ class NNTPRequestHandler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'text/html')
         self.end_headers()
         
+        # 生成分页导航
         pagination = f'<div class="pagination">'
         if page > 1:
-            pagination += f'<a href="/?page={page-1}">Prev</a> '
-        pagination += f'<span>Page {page} / {total_pages}</span>'
+            pagination += f'<a href="./?page={page-1}">上一页</a> '
+        pagination += f'<span>第 {page} 页 / 共 {total_pages} 页</span>'
         if page < total_pages:
-            pagination += f' <a href="/?page={page+1}">Next</a>'
+            pagination += f' <a href="./?page={page+1}">下一页</a>'
         pagination += '</div>'
         
+        # 生成文章列表
         articles_html = '<ul class="article-list">'
         for art_id, overview in reversed(overviews):
-            subject = overview.get('subject', 'Not Subject')
+            subject = overview.get('subject', '无主题')
             subject = decode_email_subject(subject)
-            author = overview.get('from', 'Anonymous')
+            author = overview.get('from', '未知作者')
             author = decode_email_subject(author)
-            date = overview.get('date', 'Unknown Date')
+            date = overview.get('date', '未知日期')
+            if date != '未知日期':
+                date = dateconvert(date)
             articles_html += f'''
                 <li>
                     <a href="article/{art_id}">{subject}</a>
-                    <div class="meta">Author: {author} | Date: {date}</div>
+                    <div class="meta">作者: {author} | 日期: {date}</div>
                 </li>
             '''
         articles_html += '</ul>'
         
+        # 完整HTML页面
         html = f'''
         <!DOCTYPE html>
         <html>
         <head>
             <meta charset="utf-8">
-            <title>{GROUP_NAME} - NNTP Reader</title>
+            <title>{GROUP_NAME} - NNTP 阅读器</title>
             <style>
                 body {{ font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }}
                 h1 {{ color: #333; }}
@@ -162,7 +195,9 @@ class NNTPRequestHandler(BaseHTTPRequestHandler):
             </style>
         </head>
         <body>
-            <h1>{GROUP_NAME} Articles</h1>
+            <h1>{GROUP_NAME} 文章列表</h1>
+            <p>nntp://raye.mistivia.com/sharknews</p>
+            <p><a href="https://raye.mistivia.com/nntp/">发帖</a>・<a target="_blank" href="https://blog.mistivia.com/posts/2025-06-04-newsgroup/">客户端配置</a></p>
             {pagination}
             {articles_html}
             {pagination}
@@ -175,10 +210,21 @@ class NNTPRequestHandler(BaseHTTPRequestHandler):
         raw_article = self.nntp_client.get_article(article_id)
         msg = BytesParser(policy=policy.default).parsebytes(raw_article)
         
-        subject = msg.get('subject', 'No Subject')
-        author = msg.get('from', 'Anonymous')
-        date = msg.get('date', 'Unknown Date')
+        # 提取文章信息
+        subject = msg.get('subject', '无主题')
+        author = msg.get('from', '未知作者')
+        date = msg.get('date', '未知日期')
+        if date != '未知日期':
+            date = dateconvert(date)
+        msgid = msg.get('message-id', '')
+        replaySubject = ''
+        if subject[:3] == 'Re:':
+            replySubject = subject
+        else:
+            replySubject = 'Re: ' + subject
+        replyurl = 'https://raye.mistivia.com/nntp?r=' + urllib.parse.quote(msgid) + "&subject=" + urllib.parse.quote(replySubject)
         
+        # 处理正文和附件
         body_html = ''
         attachments = []
         part_id = 0
@@ -196,33 +242,40 @@ class NNTPRequestHandler(BaseHTTPRequestHandler):
             charset = msg.get_content_charset('utf-8')
             body_html = msg.get_payload(decode=True).decode(charset, errors='replace')
         
+        # 将纯文本转换为HTML（简单处理）
         body_html = '<pre>' + body_html.replace('\n', '<br>') + '</pre>'
         
+        # 生成附件HTML
         attachments_html = ''
         if attachments:
-            attachments_html = '<div class="attachments"><h3>Attachments</h3>'
+            attachments_html = '<div class="attachments"><h3>附件</h3>'
             for pid, part in attachments:
-                filename = part.get_filename('Unnamed')
-                content_type = part.get_content_type()
-                
-                if content_type.startswith('image/'):
-                    # Embedded Image
-                    img_data = base64.b64encode(part.get_payload(decode=True)).decode('ascii')
-                    attachments_html += f'''
-                    <div class="attachment">
-                        <strong>{filename}</strong> (Image)<br>
-                        <img src="data:{content_type};base64,{img_data}" style="max-width: 100%;">
-                    </div>
-                    '''
-                else:
-                    attachments_html += f'''
-                    <div class="attachment">
-                        <a href="../attachment/{article_id}/{pid}">{filename}</a>
-                        ({content_type}, {len(part.get_payload(decode=True))} bytes)
-                    </div>
-                    '''
+                try:
+                    filename = part.get_filename('未命名')
+                    content_type = part.get_content_type()
+                    
+                    if content_type.startswith('image/'):
+                        # 内嵌图片
+                        img_data = base64.b64encode(part.get_payload(decode=True)).decode('ascii')
+                        attachments_html += f'''
+                        <div class="attachment">
+                            <strong>{filename}</strong> (图像)<br>
+                            <img src="data:{content_type};base64,{img_data}" style="max-width: 100%;">
+                        </div>
+                        '''
+                    else:
+                        # 其他类型附件提供下载链接
+                        attachments_html += f'''
+                        <div class="attachment">
+                            <a href="../attachment/{article_id}/{pid}">{filename}</a>
+                            ({content_type}, {len(part.get_payload(decode=True))} bytes)
+                        </div>
+                        '''
+                except:
+                    pass
             attachments_html += '</div>'
         
+        # 完整文章HTML
         html = f'''
         <!DOCTYPE html>
         <html>
@@ -230,22 +283,24 @@ class NNTPRequestHandler(BaseHTTPRequestHandler):
             <meta charset="utf-8">
             <title>{subject}</title>
             <style>
-                body {{ font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }}
+                body {{ font-family: sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; }}
                 .article-header {{ background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin-bottom: 20px; }}
                 .back-link {{ margin-bottom: 20px; display: block; }}
-                pre {{ font-size: 12px; white-space: pre-wrap; background-color: #f8f8f8; padding: 10px; border-radius: 3px; }}
+                img {{ max-width:600px; }}
+                pre {{ font-size: 15px; white-space: pre-wrap; background-color: #f8f8f8; padding: 10px; border-radius: 3px; }}
             </style>
         </head>
         <body>
-            <a class="back-link" href="../">&larr; Back to list</a>
+            <a class="back-link" href="../">&larr; 返回列表</a>
             <div class="article-header">
                 <h1>{subject}</h1>
-                <div><strong>Author:</strong> {author}</div>
-                <div><strong>Date:</strong> {date}</div>
+                <div><strong>作者:</strong> {author}</div>
+                <div><strong>日期:</strong> {date}</div>
             </div>
             <div class="article-body">
                 {body_html}
             </div>
+            <a target="_blank" href="{replyurl}">回复</a>
             {attachments_html}
         </body>
         </html>
@@ -260,6 +315,7 @@ class NNTPRequestHandler(BaseHTTPRequestHandler):
         raw_article = self.nntp_client.get_article(article_id)
         msg = BytesParser(policy=policy.default).parsebytes(raw_article)
         
+        # 查找指定附件部分
         attachment = None
         part_index = 0
         
@@ -286,6 +342,7 @@ class NNTPRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
 class ReusableAddressHTTPServer(HTTPServer):
+    """允许端口重用的HTTP服务器"""
     def server_bind(self):
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         super().server_bind()
@@ -293,15 +350,16 @@ class ReusableAddressHTTPServer(HTTPServer):
 def run_server(port=8000):
     server_address = ('', port)
     httpd = ReusableAddressHTTPServer(server_address, NNTPRequestHandler)
-    print(f"Start NNTP reader at http://localhost:{port}")
-    print("Press Ctrl+C to stop")
+    print(f"启动NNTP阅读器在 http://localhost:{port}")
+    print("按Ctrl+C停止服务器")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\nServer is shutting down...")
+        print("\n服务器正在关闭...")
         httpd.server_close()
         sys.exit(0)
 
 if __name__ == '__main__':
-    run_server(port=LISTEN_PORT)
+    run_server(port=8006)
+
 

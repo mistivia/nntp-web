@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NNTP Web Poster</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: #fff;
+            padding: 2em;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 600px;
+        }
+        h1 {
+            color: #444;
+            text-align: center;
+            margin-bottom: 1em;
+        }
+        .form-group {
+            margin-bottom: 1.2em;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5em;
+            font-weight: 600;
+        }
+        input[type="text"],
+        textarea {
+            width: 100%;
+            padding: 0.8em;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 1em;
+        }
+        textarea {
+            resize: vertical;
+            min-height: 120px;
+        }
+        button {
+            width: 100%;
+            padding: 0.9em;
+            border: none;
+            background-color: #007bff;
+            color: white;
+            font-size: 1.1em;
+            font-weight: bold;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #statusMessage {
+            margin-top: 1em;
+            padding: 0.8em;
+            border-radius: 4px;
+            text-align: center;
+            font-weight: bold;
+            display: none;
+        }
+        .status-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status-error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>NNTP Web Poster</h1>
+        <form id="postForm">
+            <div class="form-group">
+                <label for="name">昵称：</label>
+                <input type="text" id="name" name="name" placeholder="" required>
+            </div>
+            <div class="form-group">
+                <label for="email">电子邮箱：</label>
+                <input type="text" id="email" name="email" placeholder="your_email@example.com" required>
+            </div>
+            <div class="form-group">
+                <label for="subject">标题：</label>
+                <input type="text" id="subject" name="subject" placeholder="帖子标题" required>
+            </div>
+            <div class="form-group">
+                <label for="body">正文：</label>
+                <textarea id="body" name="body" rows="10" placeholder="说点什么呢..." required></textarea>
+            </div>
+            <button type="submit">发送</button>
+        </form>
+        <div id="statusMessage"></div>
+    </div>
+
+    <script>
+        function mimeEncode(rawString) {
+            const utf8Encoded = encodeURIComponent(rawString);
+            let latin1String = utf8Encoded.replace(/%([0-9A-F]{2})/g, (match, p1) => {
+                return String.fromCharCode(parseInt(p1, 16));
+            });
+            const base64Content = btoa(latin1String);
+            const mimeEncodedString = `=?UTF-8?B?${base64Content}?=`
+            return mimeEncodedString;
+        }
+
+        const queryString = window.location.search;
+        const params = new URLSearchParams(queryString);
+        let apiUrl = 'https://raye.mistivia.com:8092';
+        if (params.has('subject')) {
+            const subjectInput = document.getElementById('subject');
+            subjectInput.value = params.get('subject');
+        }
+        let replyTo = "";
+        if (params.has('r')) {
+            replyTo = params.get('r');
+        }
+
+        document.getElementById('postForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+
+            const statusDiv = document.getElementById('statusMessage');
+            statusDiv.style.display = 'none';
+
+            const from = document.getElementById('name').value.trim() + ' <' + document.getElementById('email').value.trim() + '>';
+            const newsgroups = "sharknews"
+            let subject = document.getElementById('subject').value.trim();
+            subject = mimeEncode(subject);
+            const body = document.getElementById('body').value.trim();
+
+            let postData = {
+                from: from,
+                newsgroups: newsgroups,
+                subject: subject,
+                body: body
+            };
+            if (replyTo !== "") {
+                postData['reply_to'] = replyTo;
+            }
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(postData)
+                });
+                
+                const result = await response.json();
+
+                if (response.ok) {
+                    window.location.href = "https://raye.mistivia.com/sharknews/";
+                } else {
+                    showStatus(`错误: ${result.message || response.statusText}`, 'error');
+                }
+
+            } catch (error) {
+                console.error('Fetch Error:', error);
+                showStatus('Network error or server is down. Check console for details.', 'error');
+            }
+        });
+
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('statusMessage');
+            statusDiv.textContent = message;
+            statusDiv.className = type === 'success' ? 'status-success' : 'status-error';
+            statusDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
